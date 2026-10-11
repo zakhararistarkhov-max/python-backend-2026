@@ -1,12 +1,13 @@
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import FastAPI, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import NonNegativeInt, PositiveInt
 
+from .chat import ChatRoomManager
 from .contracts import (
     CartCreatedResponse,
     CartResponse,
@@ -20,6 +21,7 @@ PriceQuery = Annotated[float | None, Query(ge=0, allow_inf_nan=False)]
 
 app = FastAPI(title="Shop API")
 store = ShopStore()
+chat_rooms = ChatRoomManager()
 
 
 @app.exception_handler(RequestValidationError)
@@ -109,3 +111,15 @@ def patch_item(item_id: int, body: PatchItemRequest) -> ItemResponse:
 def delete_item(item_id: int) -> None:
     store.delete_item(item_id)
 
+
+@app.websocket("/chat/{chat_name}")
+async def chat(websocket: WebSocket, chat_name: str) -> None:
+    await chat_rooms.connect(chat_name, websocket)
+    try:
+        while True:
+            message = await websocket.receive_text()
+            await chat_rooms.broadcast(chat_name, websocket, message)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        chat_rooms.disconnect(chat_name, websocket)

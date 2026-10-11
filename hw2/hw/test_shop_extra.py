@@ -1,3 +1,5 @@
+import asyncio
+import re
 from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 
@@ -5,12 +7,16 @@ import pytest
 from fastapi.testclient import TestClient
 
 from shop_api import main
+from shop_api.chat import ChatRoomManager
 from shop_api.store import ShopStore
+
+MESSAGE_RE = re.compile(r"^(\S+) :: (.*)$")
 
 
 @pytest.fixture()
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(main, "store", ShopStore())
+    monkeypatch.setattr(main, "chat_rooms", ChatRoomManager())
     return TestClient(main.app)
 
 
@@ -24,6 +30,12 @@ def create_cart(client: TestClient) -> int:
     response = client.post("/cart")
     assert response.status_code == HTTPStatus.CREATED
     return response.json()["id"]
+
+
+def parse(message: str) -> tuple[str, str]:
+    match = MESSAGE_RE.match(message)
+    assert match is not None, message
+    return match.group(1), match.group(2)
 
 
 def test_post_cart_location_points_to_cart(client: TestClient) -> None:
@@ -393,3 +405,98 @@ def test_concurrent_store_creates_have_unique_ids() -> None:
 
     assert sorted(ids) == list(range(1, 401))
 
+
+def test_chat_broadcasts_to_others_in_same_room_only(client: TestClient) -> None:
+    with (
+        client.websocket_connect("/chat/room1") as alice,
+        client.websocket_connect("/chat/room1") as bob,
+        client.websocket_connect("/chat/room2") as carol,
+        client.websocket_connect("/chat/room2") as dave,
+    ):
+        alice.send_text("hello room1")
+        alice_name, text = parse(bob.receive_text())
+        assert text == "hello room1"
+
+        bob.send_text("hi alice")
+        bob_name, text = parse(alice.receive_text())
+        assert text == "hi alice"
+        assert bob_name != alice_name
+
+        carol.send_text("hello room2")
+        carol_name, text = parse(dave.receive_text())
+        assert text == "hello room2"
+
+        dave.send_text("hi carol")
+        dave_name, text = parse(carol.receive_text())
+        assert text == "hi carol"
+
+        alice.send_text("again")
+        assert parse(bob.receive_text()) == (alice_name, "again")
+
+        assert len({alice_name, bob_name, carol_name, dave_name}) == 4
+
+
+def test_chat_message_format_keeps_separator_in_text(client: TestClient) -> None:
+    with (
+        client.websocket_connect("/chat/fmt") as sender,
+        client.websocket_connect("/chat/fmt") as receiver,
+    ):
+        sender.send_text("a :: b")
+        message = receiver.receive_text()
+
+    name, text = parse(message)
+    assert message == f"{name} :: a :: b"
+    assert text == "a :: b"
+
+
+def test_chat_removes_disconnected_clients_and_empty_rooms(client: TestClient) -> None:
+    rooms: ChatRoomManager = main.chat_rooms
+
+    with client.websocket_connect("/chat/stay") as stayer:
+        with client.websocket_connect("/chat/stay") as leaver:
+            leaver.send_text("bye")
+            parse(stayer.receive_text())
+            assert rooms.size("stay") == 2
+
+        with client.websocket_connect("/chat/other") as other:
+            other.send_text("ping")
+            stayer.send_text("still here")
+            assert rooms.size("stay") == 1
+            assert rooms.size("other") == 1
+
+    assert rooms.size("stay") == 0
+    assert rooms.size("other") == 0
+    assert rooms.room_names() == []
+
+
+class FakeSocket:
+    def __init__(self, broken: bool = False) -> None:
+        self.broken = broken
+        self.accepted = False
+        self.sent: list[str] = []
+
+    async def accept(self) -> None:
+        self.accepted = True
+
+    async def send_text(self, text: str) -> None:
+        if self.broken:
+            raise RuntimeError("socket is closed")
+        self.sent.append(text)
+
+
+def test_chat_broadcast_survives_dead_socket() -> None:
+    async def scenario() -> None:
+        rooms = ChatRoomManager()
+        sender, dead, alive = FakeSocket(), FakeSocket(broken=True), FakeSocket()
+        sender_name = await rooms.connect("r", sender)
+        await rooms.connect("r", dead)
+        await rooms.connect("r", alive)
+
+        await rooms.broadcast("r", sender, "msg")
+
+        assert sender.accepted and dead.accepted and alive.accepted
+        assert alive.sent == [f"{sender_name} :: msg"]
+        assert sender.sent == []
+        assert rooms.size("r") == 2
+
+    asyncio.run(scenario())
