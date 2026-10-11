@@ -19,6 +19,10 @@ class ApiError(Exception):
         self.detail = detail
 
 
+class ClientDisconnected(Exception):
+    """Client closed the connection before the request was fully received."""
+
+
 class MathApi:
     """ASGI application serving factorial, fibonacci and mean endpoints."""
 
@@ -50,6 +54,8 @@ class MathApi:
             status, payload = HTTPStatus.OK, {"result": await handler(scope, receive)}
         except ApiError as error:
             status, payload = error.status, {"detail": error.detail}
+        except ClientDisconnected:
+            return
         await self._respond(send, status, payload)
 
     def _route(self, path: str) -> Callable[[Scope, Receive], Awaitable[int | float]]:
@@ -93,7 +99,10 @@ class MathApi:
     def mean(self, numbers: list[float]) -> float:
         if not numbers:
             raise ApiError(HTTPStatus.BAD_REQUEST, "At least one number is required")
-        return math.fsum(number / len(numbers) for number in numbers)
+        try:
+            return math.fsum(numbers) / len(numbers)
+        except OverflowError:
+            return math.fsum(number / len(numbers) for number in numbers)
 
     @staticmethod
     def _check_range(n: int, maximum: int) -> None:
@@ -109,6 +118,8 @@ class MathApi:
         body = bytearray()
         while True:
             message = await receive()
+            if message["type"] == "http.disconnect":
+                raise ClientDisconnected
             if message["type"] != "http.request":
                 break
             body += message.get("body", b"")
@@ -119,7 +130,10 @@ class MathApi:
     def _parse_integer(self, text: str) -> int:
         if not self.INTEGER.fullmatch(text):
             raise ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "n must be an integer")
-        return int(text)
+        try:
+            return int(text)
+        except ValueError:
+            raise ApiError(HTTPStatus.BAD_REQUEST, "n is out of range") from None
 
     def _parse_json_numbers(self, body: bytes) -> list[float]:
         try:

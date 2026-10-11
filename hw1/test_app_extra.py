@@ -268,3 +268,53 @@ async def test_test_client_runs_lifespan():
         response = await client.get("/factorial", query_string={"n": 3})
 
     assert response.json() == {"result": 6}
+
+
+@pytest.mark.parametrize("path", ["/factorial", "/fibonacci/"])
+@pytest.mark.parametrize(
+    "digits",
+    ["1" * 5000, "0" * 5000, "-" + "1" * 5000],
+    ids=["ones", "zeros", "negative"],
+)
+async def test_overlong_integer_is_out_of_range(path: str, digits: str):
+    if path == "/factorial":
+        call = await RawCall(http_scope(path, b"n=" + digits.encode()), chunks(b"")).run()
+    else:
+        call = await RawCall(http_scope(path + digits), chunks(b"")).run()
+
+    assert call.status == HTTPStatus.BAD_REQUEST
+
+
+@pytest.mark.parametrize(
+    ("numbers", "expected"),
+    [([-48.99] * 3, -48.99), ([5e-324] * 3, 5e-324)],
+)
+async def test_mean_sums_before_dividing(numbers: list[float], expected: float):
+    call = await RawCall(http_scope("/mean"), chunks(json.dumps(numbers).encode())).run()
+
+    assert call.payload == {"result": expected}
+
+
+async def test_mean_of_huge_values_stays_finite():
+    call = await RawCall(http_scope("/mean"), chunks(b"[1.7e308, 1.7e308, 1.7e308]")).run()
+
+    assert call.status == HTTPStatus.OK
+    assert call.payload["result"] == pytest.approx(1.7e308)
+
+
+async def test_disconnect_while_reading_body_sends_nothing():
+    call = await RawCall(
+        http_scope("/mean"),
+        [
+            {"type": "http.request", "body": b"[1, ", "more_body": True},
+            {"type": "http.disconnect"},
+        ],
+    ).run()
+
+    assert call.sent == []
+
+
+async def test_unsupported_scope_type_is_ignored():
+    call = await RawCall({"type": "websocket", "path": "/"}, []).run()
+
+    assert call.sent == []
