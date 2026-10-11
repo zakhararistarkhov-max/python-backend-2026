@@ -1,0 +1,38 @@
+name: "HW1 CI"
+
+on:
+  push:
+    paths:
+      - "hw1/**"
+      - ".github/workflows/hw1-ci.yml"
+  pull_request:
+    paths:
+      - "hw1/**"
+      - ".github/workflows/hw1-ci.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        working-directory: hw1
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        working-directory: hw1
+        run: pytest test_app.py test_app_extra.py -v
