@@ -20,7 +20,7 @@
 
 - `items(id identity, name, price double precision CHECK (price >= 0), deleted bool DEFAULT false)`;
 - `carts(id identity)`;
-- `cart_items(cart_id FK, item_id FK, quantity CHECK (quantity > 0), PRIMARY KEY (cart_id, item_id))`.
+- `cart_items(cart_id FK, item_id FK, quantity bigint CHECK (quantity > 0), PRIMARY KEY (cart_id, item_id))`.
 
 Транзакции:
 
@@ -29,6 +29,8 @@
 - проверка переполнения цены выполняется в той же транзакции под блокировками строк: добавление берёт `FOR SHARE` на товар и `FOR UPDATE` на корзину, смена цены — `FOR UPDATE` на товар и на корзины с ним (в одном порядке, без взаимных блокировок); при переполнении — 409 и данные не меняются.
 
 Позиции корзины отдаются в порядке `id` товара.
+
+Фильтры `GET /cart`: `min_quantity`/`max_quantity` применяются в SQL (`HAVING` по сумме количеств); значения больше `2**63 - 1` не уходят в БД — слишком большой `min_quantity` сразу даёт `[]`, слишком большой `max_quantity` означает отсутствие верхней границы. Фильтры `min_price`/`max_price` считаются в Python по всем корзинам, прошедшим фильтр по количеству (цена зависит от текущих цен и удалённых товаров), и только потом применяются `offset`/`limit`, поэтому на большом числе корзин такой запрос читает их все.
 
 ## Запуск
 
@@ -48,11 +50,12 @@ docker compose down -v
 
 ## Тесты
 
-Без `DATABASE_URL` `conftest.py` подставляет временную SQLite-базу, поэтому исходные тесты запускаются как раньше:
+`conftest.py` подставляет изолированную временную SQLite-базу, только если `DATABASE_URL` не задан. Если в окружении экспортирован `DATABASE_URL` из compose, тесты пойдут в эту базу и изменят её данные, поэтому перед запуском тестов выполните `unset DATABASE_URL`:
 
 ```bash
 cd hw2/hw
 pip install -r requirements.txt
+unset DATABASE_URL
 PYTHONPATH=. pytest test_homework2.py test_shop_extra.py test_metrics.py
 ```
 

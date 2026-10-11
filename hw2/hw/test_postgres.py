@@ -9,7 +9,6 @@ from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from prometheus_client import CollectorRegistry
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -24,19 +23,6 @@ from shop_api.store import PriceOverflowError, ShopStore
 POSTGRES_URL = os.environ.get("TEST_POSTGRES_URL")
 
 pytestmark = pytest.mark.skipif(not POSTGRES_URL, reason="TEST_POSTGRES_URL is not set")
-
-
-class SnapshotFailingMetrics(ShopMetrics):
-    """Metrics that can fail while a cart snapshot is built inside a transaction."""
-
-    def __init__(self) -> None:
-        super().__init__(CollectorRegistry())
-        self.failing = False
-
-    def cart_returned(self, cart: object) -> None:
-        if self.failing:
-            raise RuntimeError("snapshot failed")
-        super().cart_returned(cart)
 
 
 @pytest.fixture()
@@ -60,13 +46,8 @@ def engine() -> Iterator[Engine]:
 
 
 @pytest.fixture()
-def metrics() -> SnapshotFailingMetrics:
-    return SnapshotFailingMetrics()
-
-
-@pytest.fixture()
-def store(engine: Engine, metrics: SnapshotFailingMetrics) -> ShopStore:
-    store = ShopStore(engine, metrics)
+def store(engine: Engine, snapshot_metrics: ShopMetrics) -> ShopStore:
+    store = ShopStore(engine, snapshot_metrics)
     store.create_schema()
     return store
 
@@ -99,15 +80,15 @@ def test_ids_are_generated_by_database(store: ShopStore) -> None:
 
 
 def test_failed_add_rolls_back_without_partial_rows(
-    engine: Engine, store: ShopStore, metrics: SnapshotFailingMetrics
+    engine: Engine, store: ShopStore, snapshot_metrics: ShopMetrics
 ) -> None:
     cart_id = store.create_cart()
     item_id = store.create_item("x", 1.0).id
 
-    metrics.failing = True
+    snapshot_metrics.failing = True
     with pytest.raises(RuntimeError):
         store.add_to_cart(cart_id, item_id)
-    metrics.failing = False
+    snapshot_metrics.failing = False
 
     assert count(engine, CartItemRow) == 0
     assert store.get_cart(cart_id).items == []
@@ -256,3 +237,38 @@ def test_http_contract_on_postgres(monkeypatch: pytest.MonkeyPatch, store: ShopS
         "items": [{"id": item_id, "name": "huge", "quantity": 1, "available": False}],
         "price": 0.0,
     }
+
+
+@pytest.mark.parametrize("huge", [2**63 - 1, 2**63, 2**70])
+def test_huge_filters_on_postgres(
+    monkeypatch: pytest.MonkeyPatch, store: ShopStore, huge: int
+) -> None:
+    monkeypatch.setattr(main, "store", store)
+    client = TestClient(main.app)
+    item_id = store.create_item("x", 1.0).id
+    cart_id = store.create_cart()
+    store.add_to_cart(cart_id, item_id)
+
+    assert client.get("/cart", params={"min_quantity": huge}).json() == []
+    assert client.get("/cart", params={"min_quantity": huge, "min_price": 0}).json() == []
+    assert [cart["id"] for cart in client.get("/cart", params={"max_quantity": huge}).json()] == [
+        cart_id
+    ]
+    for path in ("/item", "/cart"):
+        assert client.get(path, params={"min_price": 1e308}).json() == []
+        assert len(client.get(path, params={"max_price": 1e308}).json()) == 1
+
+
+def test_column_types_and_defaults(engine: Engine, store: ShopStore) -> None:
+    with engine.begin() as connection:
+        quantity_type = connection.scalar(
+            text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'cart_items' AND column_name = 'quantity'"
+            )
+        )
+        connection.execute(text("INSERT INTO items (name, price) VALUES ('raw', 1.0)"))
+
+    assert quantity_type == "bigint"
+    assert [item.name for item in store.list_items(0, 10, None, None, False)] == ["raw"]

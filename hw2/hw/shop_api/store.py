@@ -130,8 +130,10 @@ class ShopStore:
             select(CartRow.id).outerjoin(CartItemRow).group_by(CartRow.id).order_by(CartRow.id)
         )
         if min_quantity is not None:
+            if min_quantity > MAX_KEY:
+                return []
             query = query.having(total >= min_quantity)
-        if max_quantity is not None:
+        if max_quantity is not None and max_quantity <= MAX_KEY:
             query = query.having(total <= max_quantity)
         filter_price = min_price is not None or max_price is not None
         if not filter_price:

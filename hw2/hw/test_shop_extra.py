@@ -5,13 +5,12 @@ from http import HTTPStatus
 
 import pytest
 from fastapi.testclient import TestClient
-from prometheus_client import CollectorRegistry
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from shop_api import main
 from shop_api.chat import ChatRoomManager
 from shop_api.database import database_url
-from shop_api.metrics import ShopMetrics
 from shop_api.store import ShopStore
 
 MESSAGE_RE = re.compile(r"^(\S+) :: (.*)$")
@@ -451,29 +450,15 @@ def test_concurrent_store_creates_have_unique_ids(store: ShopStore) -> None:
     assert sorted(ids) == list(range(1, 401))
 
 
-class SnapshotFailingMetrics(ShopMetrics):
-    """Metrics that can fail while a cart snapshot is built inside a transaction."""
-
-    def __init__(self) -> None:
-        super().__init__(CollectorRegistry())
-        self.failing = False
-
-    def cart_returned(self, cart: object) -> None:
-        if self.failing:
-            raise RuntimeError("snapshot failed")
-        super().cart_returned(cart)
-
-
-def test_failed_add_to_cart_rolls_back_whole_transaction(make_store) -> None:
-    metrics = SnapshotFailingMetrics()
-    store = make_store(metrics)
+def test_failed_add_to_cart_rolls_back_whole_transaction(make_store, snapshot_metrics) -> None:
+    store = make_store(snapshot_metrics)
     cart_id = store.create_cart()
     item_id = store.create_item("x", 1.0).id
 
-    metrics.failing = True
+    snapshot_metrics.failing = True
     with pytest.raises(RuntimeError):
         store.add_to_cart(cart_id, item_id)
-    metrics.failing = False
+    snapshot_metrics.failing = False
 
     assert store.get_cart(cart_id).items == []
     assert store.add_to_cart(cart_id, item_id).items[0].quantity == 1
@@ -520,6 +505,34 @@ def test_huge_pagination_values_are_accepted(client: TestClient) -> None:
     assert len(client.get("/item", params={"limit": 2**70}).json()) == 1
     assert client.get("/cart", params={"offset": 2**70}).json() == []
     assert len(client.get("/cart", params={"limit": 2**70}).json()) == 1
+
+
+@pytest.mark.parametrize("huge", [2**63 - 1, 2**63, 2**70])
+def test_huge_quantity_filters_are_accepted(client: TestClient, huge: int) -> None:
+    cart_id = create_cart(client)
+    client.post(f"/cart/{cart_id}/add/{create_item(client)}")
+
+    assert client.get("/cart", params={"min_quantity": huge}).json() == []
+    assert client.get("/cart", params={"min_quantity": huge, "min_price": 0}).json() == []
+    assert [cart["id"] for cart in client.get("/cart", params={"max_quantity": huge}).json()] == [
+        cart_id
+    ]
+
+
+def test_huge_price_filters_are_accepted(client: TestClient) -> None:
+    cart_id = create_cart(client)
+    client.post(f"/cart/{cart_id}/add/{create_item(client, price=1.0)}")
+
+    for path in ("/item", "/cart"):
+        assert client.get(path, params={"min_price": 1e308}).json() == []
+        assert len(client.get(path, params={"max_price": 1e308}).json()) == 1
+
+
+def test_items_inserted_without_deleted_flag_are_not_deleted(store: ShopStore) -> None:
+    with store._engine.begin() as connection:
+        connection.execute(text("INSERT INTO items (name, price) VALUES ('raw', 1.0)"))
+
+    assert [item.name for item in store.list_items(0, 10, None, None, False)] == ["raw"]
 
 
 def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:

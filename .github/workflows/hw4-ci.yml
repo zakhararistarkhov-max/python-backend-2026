@@ -2,7 +2,7 @@ name: "HW4 CI"
 
 on:
   push:
-    branches: [ '**' ]
+    branches: [ main ]
     paths:
       - 'hw2/hw/**'
       - 'hw4/check_persistence.sh'
