@@ -23,14 +23,16 @@ class RatePacer:
         self._next = time.monotonic()
         self._lock = asyncio.Lock()
 
-    async def wait(self) -> None:
+    async def wait(self, deadline: float) -> bool:
         async with self._lock:
             now = time.monotonic()
-            self._next = max(self._next, now)
-            delay = self._next - now
-            self._next += self._interval
-        if delay > 0:
-            await asyncio.sleep(delay)
+            start = max(self._next, now)
+            if start >= deadline:
+                return False
+            self._next = start + self._interval
+        if start > now:
+            await asyncio.sleep(start - now)
+        return True
 
 
 @dataclass
@@ -80,6 +82,7 @@ class ShopLoadGenerator:
         self._duration = duration
         self._concurrency = concurrency
         self._pacer = RatePacer(rps)
+        self._deadline = 0.0
         self._random = random.Random(seed)
         self._items: list[int] = []
         self._deleted: list[int] = []
@@ -106,13 +109,11 @@ class ShopLoadGenerator:
         return self._summary
 
     async def run(self) -> LoadSummary:
-        deadline = time.monotonic() + self._duration
+        self._deadline = time.monotonic() + self._duration
         limits = httpx.Limits(max_connections=self._concurrency)
         async with httpx.AsyncClient(base_url=self._base_url, timeout=5.0, limits=limits) as client:
             await self._seed(client)
-            await asyncio.gather(
-                *(self._worker(client, deadline) for _ in range(self._concurrency))
-            )
+            await asyncio.gather(*(self._worker(client) for _ in range(self._concurrency)))
         self._summary.finished = time.monotonic()
         return self._summary
 
@@ -121,13 +122,10 @@ class ShopLoadGenerator:
             await self._create_item(client)
             await self._create_cart(client)
 
-    async def _worker(self, client: httpx.AsyncClient, deadline: float) -> None:
+    async def _worker(self, client: httpx.AsyncClient) -> None:
         operations = list(self._operations)
         weights = list(self._operations.values())
-        while True:
-            await self._pacer.wait()
-            if time.monotonic() >= deadline:
-                return
+        while await self._pacer.wait(self._deadline):
             operation = self._random.choices(operations, weights)[0]
             try:
                 await operation(client)
@@ -235,17 +233,24 @@ class ShopLoadGenerator:
         method, url, kwargs = self._random.choice(requests)
         await self._call(client, "invalid", method, url, **kwargs)
 
+    async def _paced_call(
+        self, client: httpx.AsyncClient, name: str, method: str, url: str, **kwargs
+    ) -> httpx.Response | None:
+        if not await self._pacer.wait(self._deadline):
+            return None
+        return await self._call(client, name, method, url, **kwargs)
+
     async def _overflow(self, client: httpx.AsyncClient) -> None:
         cart = await self._call(client, "overflow", "POST", "/cart")
-        item = await self._call(
-            client, "overflow", "POST", "/item", json={"name": "huge", "price": OVERFLOW_PRICE}
-        )
-        if cart.status_code != 201 or item.status_code != 201:
+        body = {"name": "huge", "price": OVERFLOW_PRICE}
+        item = await self._paced_call(client, "overflow", "POST", "/item", json=body)
+        if item is None or cart.status_code != 201 or item.status_code != 201:
             return
-        url = f"/cart/{cart.json()['id']}/add/{item.json()['id']}"
-        await self._call(client, "overflow", "POST", url)
-        await self._call(client, "overflow", "POST", url)
-        await self._call(client, "overflow", "DELETE", f"/item/{item.json()['id']}")
+        item_id = item.json()["id"]
+        url = f"/cart/{cart.json()['id']}/add/{item_id}"
+        for method, path in (("POST", url), ("POST", url), ("DELETE", f"/item/{item_id}")):
+            if await self._paced_call(client, "overflow", method, path) is None:
+                return
 
 
 def bounded(kind: type, low: float, high: float):

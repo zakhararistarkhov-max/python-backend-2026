@@ -92,8 +92,9 @@ class ShopMetrics:
         )
         self._stage_seconds = Histogram(
             "shop_store_stage_duration_seconds",
-            "Wall time in seconds of a critical ShopStore stage including lock wait; "
-            "cart_snapshot is building one cart response with its price.",
+            "Wall time in seconds of a critical ShopStore stage, including lock wait "
+            "and failed or rejected attempts; cart_snapshot is building one cart "
+            "response with its price.",
             ["stage"],
             buckets=(
                 0.00001,

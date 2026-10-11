@@ -45,6 +45,10 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/hw2/hw
         run: pytest test_homework2.py test_shop_extra.py test_metrics.py -v
 
+      - name: Run load generator tests
+        working-directory: hw3
+        run: pytest test_load_generator.py -v
+
   compose:
     runs-on: ubuntu-latest
     needs: test
@@ -61,7 +65,8 @@ jobs:
       - name: Validate dashboards JSON
         run: |
           for f in monitoring/grafana/dashboards/*.json; do
-            python -m json.tool "$f" > /dev/null && echo "ok $f"
+            python -m json.tool "$f" > /dev/null || exit 1
+            echo "ok $f"
           done
 
       - name: Start stack
@@ -85,12 +90,15 @@ jobs:
 
       - name: Check Prometheus target and custom metrics
         run: |
-          query() {
-            curl -sf --get http://localhost:9090/api/v1/query --data-urlencode "query=$1"
+          value() {
+            curl -sf --get http://localhost:9090/api/v1/query --data-urlencode "query=$1" \
+              | python -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(r[0]["value"][1] if r else "")' \
+              || true
           }
           for i in $(seq 1 20); do
-            up=$(query 'up{job="shop", datacenter="local"}' | python -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(r[0]["value"][1] if r else "")')
-            items=$(query 'sum(shop_items_created_total{job="shop"})' | python -c 'import json,sys; r=json.load(sys.stdin)["data"]["result"]; print(r[0]["value"][1] if r else "0")')
+            up=$(value 'up{job="shop", datacenter="local"}')
+            items=$(value 'sum(shop_items_created_total{job="shop"})')
+            items=${items:-0}
             echo "up=$up items_created=$items"
             if [ "$up" = "1" ] && python -c "import sys; sys.exit(float('$items') <= 0)"; then
               exit 0
