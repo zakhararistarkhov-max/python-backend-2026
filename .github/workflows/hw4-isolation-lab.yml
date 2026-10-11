@@ -1,0 +1,52 @@
+name: HW4 isolation lab
+
+on:
+  push:
+    paths:
+      - 'hw4/isolation_lab/**'
+      - '.github/workflows/hw4-isolation-lab.yml'
+  pull_request:
+    paths:
+      - 'hw4/isolation_lab/**'
+      - '.github/workflows/hw4-isolation-lab.yml'
+
+jobs:
+  isolation-lab:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13", "3.14"]
+    defaults:
+      run:
+        working-directory: hw4/isolation_lab
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build --build-arg PYTHON_VERSION=${{ matrix.python-version }} -t isolation-lab:${{ matrix.python-version }} .
+
+      - name: Run lab three times
+        run: |
+          mkdir -p out/logs out/images
+          for i in 1 2 3; do
+            timeout 300 docker run --rm -v "$PWD/out/logs:/lab/logs" isolation-lab:${{ matrix.python-version }} \
+              python -m isolation_lab --journal logs/run$i.jsonl
+          done
+
+      - name: Render timelines
+        run: |
+          docker run --rm -v "$PWD/out/logs:/lab/logs" -v "$PWD/out/images:/lab/images" isolation-lab:${{ matrix.python-version }} \
+            python -m isolation_lab.visualizer logs/run1.jsonl images
+          test "$(ls out/images/*.png | wc -l)" -eq 6
+
+      - name: Run unit tests
+        run: docker run --rm isolation-lab:${{ matrix.python-version }} python -m unittest discover -s tests -t . -v
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolation-lab-py${{ matrix.python-version }}
+          path: hw4/isolation_lab/out
