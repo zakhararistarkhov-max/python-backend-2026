@@ -5,6 +5,7 @@ from fastapi import FastAPI, Query, Request, Response, WebSocket, WebSocketDisco
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import NonNegativeInt, PositiveInt
 
 from .chat import ChatRoomManager
@@ -15,6 +16,7 @@ from .contracts import (
     ItemResponse,
     PatchItemRequest,
 )
+from .metrics import HTTP_LATENCY_BUCKETS
 from .store import NotFoundError, NotModifiedError, PriceOverflowError, ShopStore
 
 PriceQuery = Annotated[float | None, Query(ge=0, allow_inf_nan=False)]
@@ -22,6 +24,15 @@ PriceQuery = Annotated[float | None, Query(ge=0, allow_inf_nan=False)]
 app = FastAPI(title="Shop API")
 store = ShopStore()
 chat_rooms = ChatRoomManager()
+Instrumentator(
+    should_group_status_codes=False,
+    should_ignore_untemplated=True,
+    excluded_handlers=["/metrics"],
+).instrument(
+    app,
+    latency_highr_buckets=HTTP_LATENCY_BUCKETS,
+    latency_lowr_buckets=HTTP_LATENCY_BUCKETS,
+).expose(app, include_in_schema=False)
 
 
 @app.exception_handler(RequestValidationError)

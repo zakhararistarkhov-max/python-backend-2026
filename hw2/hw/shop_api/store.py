@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from threading import Lock
 
 from .contracts import CartItemResponse, CartResponse, ItemResponse
+from .metrics import ShopMetrics, shop_metrics
 
 
 class NotFoundError(Exception):
@@ -38,7 +39,8 @@ class Cart:
 class ShopStore:
     """Thread-safe in-memory storage for items and carts."""
 
-    def __init__(self) -> None:
+    def __init__(self, metrics: ShopMetrics = shop_metrics) -> None:
+        self._metrics = metrics
         self._lock = Lock()
         self._items: dict[int, Item] = {}
         self._carts: dict[int, Cart] = {}
@@ -46,10 +48,11 @@ class ShopStore:
         self._last_cart_id = 0
 
     def create_item(self, name: str, price: float) -> ItemResponse:
-        with self._lock:
+        with self._metrics.stage("create_item"), self._lock:
             self._last_item_id += 1
             item = Item(self._last_item_id, name, price)
             self._items[item.id] = item
+            self._metrics.item_created()
             return self._item_response(item)
 
     def get_item(self, item_id: int) -> ItemResponse:
@@ -64,7 +67,7 @@ class ShopStore:
         max_price: float | None,
         show_deleted: bool,
     ) -> list[ItemResponse]:
-        with self._lock:
+        with self._metrics.stage("list_items"), self._lock:
             items = [
                 item
                 for item in self._items.values()
@@ -76,7 +79,7 @@ class ShopStore:
     def update_item(
         self, item_id: int, name: str | None = None, price: float | None = None
     ) -> ItemResponse:
-        with self._lock:
+        with self._metrics.stage("update_item"), self._lock:
             item = self._items.get(item_id)
             if item is None:
                 raise NotFoundError
@@ -90,17 +93,20 @@ class ShopStore:
             return self._item_response(item)
 
     def delete_item(self, item_id: int) -> None:
-        with self._lock:
+        with self._metrics.stage("delete_item"), self._lock:
             item = self._items.get(item_id)
             if item is None:
                 raise NotFoundError
             item.deleted = True
+        self._metrics.item_deleted()
 
     def create_cart(self) -> int:
-        with self._lock:
+        with self._metrics.stage("create_cart"), self._lock:
             self._last_cart_id += 1
-            self._carts[self._last_cart_id] = Cart(self._last_cart_id)
-            return self._last_cart_id
+            cart_id = self._last_cart_id
+            self._carts[cart_id] = Cart(cart_id)
+        self._metrics.cart_created()
+        return cart_id
 
     def get_cart(self, cart_id: int) -> CartResponse:
         with self._lock:
@@ -115,7 +121,7 @@ class ShopStore:
         min_quantity: int | None,
         max_quantity: int | None,
     ) -> list[CartResponse]:
-        with self._lock:
+        with self._metrics.stage("list_carts"), self._lock:
             carts = [
                 cart
                 for cart in self._carts.values()
@@ -125,14 +131,22 @@ class ShopStore:
             return [self._cart_response(cart) for cart in carts[offset : offset + limit]]
 
     def add_to_cart(self, cart_id: int, item_id: int) -> CartResponse:
-        with self._lock:
-            cart = self._cart(cart_id)
-            item = self._active_item(item_id)
+        with self._metrics.stage("add_to_cart"), self._lock:
+            cart = self._carts.get(cart_id)
+            if cart is None:
+                self._metrics.cart_add_rejected("missing_cart")
+                raise NotFoundError
+            item = self._items.get(item_id)
+            if item is None or item.deleted:
+                self._metrics.cart_add_rejected("missing_item")
+                raise NotFoundError
             quantities = dict(cart.quantities)
             quantities[item.id] = quantities.get(item.id, 0) + 1
             if not math.isfinite(self._cart_price(quantities)):
+                self._metrics.cart_add_rejected("overflow")
                 raise PriceOverflowError
             cart.quantities = quantities
+            self._metrics.cart_add_accepted()
             return self._cart_response(cart)
 
     def _active_item(self, item_id: int) -> Item:
@@ -168,19 +182,22 @@ class ShopStore:
             return math.inf
 
     def _cart_response(self, cart: Cart) -> CartResponse:
-        return CartResponse(
-            id=cart.id,
-            items=[
-                CartItemResponse(
-                    id=item_id,
-                    name=self._items[item_id].name,
-                    quantity=quantity,
-                    available=not self._items[item_id].deleted,
-                )
-                for item_id, quantity in cart.quantities.items()
-            ],
-            price=self._cart_price(cart.quantities),
-        )
+        with self._metrics.stage("cart_snapshot"):
+            response = CartResponse(
+                id=cart.id,
+                items=[
+                    CartItemResponse(
+                        id=item_id,
+                        name=self._items[item_id].name,
+                        quantity=quantity,
+                        available=not self._items[item_id].deleted,
+                    )
+                    for item_id, quantity in cart.quantities.items()
+                ],
+                price=self._cart_price(cart.quantities),
+            )
+        self._metrics.cart_returned(response)
+        return response
 
     @staticmethod
     def _item_response(item: Item) -> ItemResponse:
