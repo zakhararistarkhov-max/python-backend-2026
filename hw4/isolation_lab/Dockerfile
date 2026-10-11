@@ -2,6 +2,7 @@ ARG PYTHON_VERSION=3.13
 FROM python:${PYTHON_VERSION}-slim
 
 ARG H2_VERSION=2.5.252
+ARG H2_SHA256=90b11dc413da82070ef15fc943282c1408e6ffd34fa68998335fea8603b5ff20
 ENV JAVA_HOME=/opt/java/openjdk \
     H2_JAR=/opt/h2/h2.jar \
     MPLBACKEND=Agg \
@@ -23,6 +24,7 @@ path.parent.mkdir(parents=True, exist_ok=True)
 path.write_bytes(data)
 print("h2", "${H2_VERSION}", "sha1 ok", actual)
 PY
+RUN echo "${H2_SHA256}  ${H2_JAR}" | sha256sum -c -
 
 WORKDIR /lab
 COPY requirements.txt .

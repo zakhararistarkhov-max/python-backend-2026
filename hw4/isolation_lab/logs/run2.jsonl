@@ -1,68 +1,74 @@
-{"scenario": "01_dirty_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE account (id INT PRIMARY KEY, balance INT NOT NULL)", "value": null, "isolation": null, "t_ms": 70.902, "thread": "MainThread"}
-{"scenario": "01_dirty_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO account VALUES (1, 100)", "value": null, "isolation": null, "t_ms": 71.789, "thread": "MainThread"}
-{"scenario": "01_dirty_read", "tx": "T1", "step": "begin", "sql": null, "value": "READ UNCOMMITTED", "isolation": "READ UNCOMMITTED", "t_ms": 72.615, "thread": "T1-01_dirty_read"}
-{"scenario": "01_dirty_read", "tx": "T2", "step": "begin", "sql": null, "value": "READ UNCOMMITTED", "isolation": "READ UNCOMMITTED", "t_ms": 73.076, "thread": "T2-01_dirty_read"}
-{"scenario": "01_dirty_read", "tx": "T1", "step": "read before", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ UNCOMMITTED", "t_ms": 79.426, "thread": "T1-01_dirty_read"}
-{"scenario": "01_dirty_read", "tx": "T2", "step": "update (uncommitted)", "sql": "UPDATE account SET balance = 200 WHERE id = 1", "value": "1 row(s)", "isolation": "READ UNCOMMITTED", "t_ms": 80.386, "thread": "T2-01_dirty_read"}
-{"scenario": "01_dirty_read", "tx": "T1", "step": "read during", "sql": "SELECT balance FROM account WHERE id = 1", "value": 200, "isolation": "READ UNCOMMITTED", "t_ms": 80.604, "thread": "T1-01_dirty_read"}
-{"scenario": "01_dirty_read", "tx": "T2", "step": "rollback", "sql": "ROLLBACK", "value": null, "isolation": "READ UNCOMMITTED", "t_ms": 80.886, "thread": "T2-01_dirty_read"}
-{"scenario": "01_dirty_read", "tx": "T1", "step": "read after", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ UNCOMMITTED", "t_ms": 81.102, "thread": "T1-01_dirty_read"}
-{"scenario": "01_dirty_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "READ UNCOMMITTED", "t_ms": 81.224, "thread": "T1-01_dirty_read"}
-{"scenario": "01_dirty_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": null, "t_ms": 81.543, "thread": "MainThread"}
-{"scenario": "01_dirty_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "dirty read observed: 100 -> 200 (uncommitted) -> 100 after rollback", "isolation": "READ UNCOMMITTED", "t_ms": 81.63, "thread": "MainThread"}
-{"scenario": "02_no_dirty_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE account (id INT PRIMARY KEY, balance INT NOT NULL)", "value": null, "isolation": null, "t_ms": 1.449, "thread": "MainThread"}
-{"scenario": "02_no_dirty_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO account VALUES (1, 100)", "value": null, "isolation": null, "t_ms": 1.724, "thread": "MainThread"}
-{"scenario": "02_no_dirty_read", "tx": "T1", "step": "begin", "sql": null, "value": "READ COMMITTED", "isolation": "READ COMMITTED", "t_ms": 2.384, "thread": "T1-02_no_dirty_read"}
-{"scenario": "02_no_dirty_read", "tx": "T2", "step": "begin", "sql": null, "value": "READ COMMITTED", "isolation": "READ COMMITTED", "t_ms": 2.672, "thread": "T2-02_no_dirty_read"}
-{"scenario": "02_no_dirty_read", "tx": "T1", "step": "read before", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ COMMITTED", "t_ms": 2.825, "thread": "T1-02_no_dirty_read"}
-{"scenario": "02_no_dirty_read", "tx": "T2", "step": "update (uncommitted)", "sql": "UPDATE account SET balance = 200 WHERE id = 1", "value": "1 row(s)", "isolation": "READ COMMITTED", "t_ms": 3.149, "thread": "T2-02_no_dirty_read"}
-{"scenario": "02_no_dirty_read", "tx": "T1", "step": "read during", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ COMMITTED", "t_ms": 3.388, "thread": "T1-02_no_dirty_read"}
-{"scenario": "02_no_dirty_read", "tx": "T2", "step": "rollback", "sql": "ROLLBACK", "value": null, "isolation": "READ COMMITTED", "t_ms": 3.565, "thread": "T2-02_no_dirty_read"}
-{"scenario": "02_no_dirty_read", "tx": "T1", "step": "read after", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ COMMITTED", "t_ms": 3.789, "thread": "T1-02_no_dirty_read"}
-{"scenario": "02_no_dirty_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "READ COMMITTED", "t_ms": 3.95, "thread": "T1-02_no_dirty_read"}
-{"scenario": "02_no_dirty_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": null, "t_ms": 4.211, "thread": "MainThread"}
-{"scenario": "02_no_dirty_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "no dirty read: 100 -> 100 while T2 held uncommitted 200", "isolation": "READ COMMITTED", "t_ms": 4.283, "thread": "MainThread"}
-{"scenario": "03_non_repeatable_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE account (id INT PRIMARY KEY, balance INT NOT NULL)", "value": null, "isolation": null, "t_ms": 1.057, "thread": "MainThread"}
-{"scenario": "03_non_repeatable_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO account VALUES (1, 100)", "value": null, "isolation": null, "t_ms": 1.29, "thread": "MainThread"}
-{"scenario": "03_non_repeatable_read", "tx": "T1", "step": "begin", "sql": null, "value": "READ COMMITTED", "isolation": "READ COMMITTED", "t_ms": 1.989, "thread": "T1-03_non_repeatable_read"}
-{"scenario": "03_non_repeatable_read", "tx": "T2", "step": "begin", "sql": null, "value": "READ COMMITTED", "isolation": "READ COMMITTED", "t_ms": 2.119, "thread": "T2-03_non_repeatable_read"}
-{"scenario": "03_non_repeatable_read", "tx": "T1", "step": "read first", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ COMMITTED", "t_ms": 5.994, "thread": "T1-03_non_repeatable_read"}
-{"scenario": "03_non_repeatable_read", "tx": "T2", "step": "update", "sql": "UPDATE account SET balance = 300 WHERE id = 1", "value": "1 row(s)", "isolation": "READ COMMITTED", "t_ms": 6.31, "thread": "T2-03_non_repeatable_read"}
-{"scenario": "03_non_repeatable_read", "tx": "T2", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "READ COMMITTED", "t_ms": 8.539, "thread": "T2-03_non_repeatable_read"}
-{"scenario": "03_non_repeatable_read", "tx": "T1", "step": "read again", "sql": "SELECT balance FROM account WHERE id = 1", "value": 300, "isolation": "READ COMMITTED", "t_ms": 8.797, "thread": "T1-03_non_repeatable_read"}
-{"scenario": "03_non_repeatable_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "READ COMMITTED", "t_ms": 8.932, "thread": "T1-03_non_repeatable_read"}
-{"scenario": "03_non_repeatable_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT balance FROM account WHERE id = 1", "value": 300, "isolation": null, "t_ms": 9.241, "thread": "MainThread"}
-{"scenario": "03_non_repeatable_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "non-repeatable read observed: 100 -> 300", "isolation": "READ COMMITTED", "t_ms": 9.32, "thread": "MainThread"}
-{"scenario": "04_no_non_repeatable_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE account (id INT PRIMARY KEY, balance INT NOT NULL)", "value": null, "isolation": null, "t_ms": 1.469, "thread": "MainThread"}
-{"scenario": "04_no_non_repeatable_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO account VALUES (1, 100)", "value": null, "isolation": null, "t_ms": 1.679, "thread": "MainThread"}
-{"scenario": "04_no_non_repeatable_read", "tx": "T1", "step": "begin", "sql": null, "value": "REPEATABLE READ", "isolation": "REPEATABLE READ", "t_ms": 2.303, "thread": "T1-04_no_non_repeatable_read"}
-{"scenario": "04_no_non_repeatable_read", "tx": "T2", "step": "begin", "sql": null, "value": "REPEATABLE READ", "isolation": "REPEATABLE READ", "t_ms": 2.504, "thread": "T2-04_no_non_repeatable_read"}
-{"scenario": "04_no_non_repeatable_read", "tx": "T1", "step": "read first", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "REPEATABLE READ", "t_ms": 2.772, "thread": "T1-04_no_non_repeatable_read"}
-{"scenario": "04_no_non_repeatable_read", "tx": "T2", "step": "update", "sql": "UPDATE account SET balance = 300 WHERE id = 1", "value": "1 row(s)", "isolation": "REPEATABLE READ", "t_ms": 3.059, "thread": "T2-04_no_non_repeatable_read"}
-{"scenario": "04_no_non_repeatable_read", "tx": "T2", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "REPEATABLE READ", "t_ms": 3.346, "thread": "T2-04_no_non_repeatable_read"}
-{"scenario": "04_no_non_repeatable_read", "tx": "T1", "step": "read again", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "REPEATABLE READ", "t_ms": 3.573, "thread": "T1-04_no_non_repeatable_read"}
-{"scenario": "04_no_non_repeatable_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "REPEATABLE READ", "t_ms": 3.704, "thread": "T1-04_no_non_repeatable_read"}
-{"scenario": "04_no_non_repeatable_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT balance FROM account WHERE id = 1", "value": 300, "isolation": null, "t_ms": 3.991, "thread": "MainThread"}
-{"scenario": "04_no_non_repeatable_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "no non-repeatable read: 100 -> 100 (committed 300)", "isolation": "REPEATABLE READ", "t_ms": 4.072, "thread": "MainThread"}
-{"scenario": "05_phantom_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE item (id INT PRIMARY KEY, category VARCHAR(16) NOT NULL)", "value": null, "isolation": null, "t_ms": 1.067, "thread": "MainThread"}
-{"scenario": "05_phantom_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO item VALUES (1, 'book')", "value": null, "isolation": null, "t_ms": 1.361, "thread": "MainThread"}
-{"scenario": "05_phantom_read", "tx": "T1", "step": "begin", "sql": null, "value": "REPEATABLE READ", "isolation": "REPEATABLE READ", "t_ms": 1.885, "thread": "T1-05_phantom_read"}
-{"scenario": "05_phantom_read", "tx": "T2", "step": "begin", "sql": null, "value": "REPEATABLE READ", "isolation": "REPEATABLE READ", "t_ms": 2.013, "thread": "T2-05_phantom_read"}
-{"scenario": "05_phantom_read", "tx": "T1", "step": "read count", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 1, "isolation": "REPEATABLE READ", "t_ms": 3.508, "thread": "T1-05_phantom_read"}
-{"scenario": "05_phantom_read", "tx": "T2", "step": "insert", "sql": "INSERT INTO item VALUES (2, 'book')", "value": "1 row(s)", "isolation": "REPEATABLE READ", "t_ms": 3.76, "thread": "T2-05_phantom_read"}
-{"scenario": "05_phantom_read", "tx": "T2", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "REPEATABLE READ", "t_ms": 3.923, "thread": "T2-05_phantom_read"}
-{"scenario": "05_phantom_read", "tx": "T1", "step": "read count again", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 1, "isolation": "REPEATABLE READ", "t_ms": 4.161, "thread": "T1-05_phantom_read"}
-{"scenario": "05_phantom_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "REPEATABLE READ", "t_ms": 4.287, "thread": "T1-05_phantom_read"}
-{"scenario": "05_phantom_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 2, "isolation": null, "t_ms": 4.599, "thread": "MainThread"}
-{"scenario": "05_phantom_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "phantom not reproduced on H2 2.5.252: count 1 -> 1 (committed 2)", "isolation": "REPEATABLE READ", "t_ms": 4.682, "thread": "MainThread"}
-{"scenario": "06_no_phantom_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE item (id INT PRIMARY KEY, category VARCHAR(16) NOT NULL)", "value": null, "isolation": null, "t_ms": 1.055, "thread": "MainThread"}
-{"scenario": "06_no_phantom_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO item VALUES (1, 'book')", "value": null, "isolation": null, "t_ms": 1.262, "thread": "MainThread"}
-{"scenario": "06_no_phantom_read", "tx": "T1", "step": "begin", "sql": null, "value": "SERIALIZABLE", "isolation": "SERIALIZABLE", "t_ms": 1.822, "thread": "T1-06_no_phantom_read"}
-{"scenario": "06_no_phantom_read", "tx": "T2", "step": "begin", "sql": null, "value": "SERIALIZABLE", "isolation": "SERIALIZABLE", "t_ms": 1.955, "thread": "T2-06_no_phantom_read"}
-{"scenario": "06_no_phantom_read", "tx": "T1", "step": "read count", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 1, "isolation": "SERIALIZABLE", "t_ms": 2.111, "thread": "T1-06_no_phantom_read"}
-{"scenario": "06_no_phantom_read", "tx": "T2", "step": "insert", "sql": "INSERT INTO item VALUES (2, 'book')", "value": "1 row(s)", "isolation": "SERIALIZABLE", "t_ms": 2.388, "thread": "T2-06_no_phantom_read"}
-{"scenario": "06_no_phantom_read", "tx": "T2", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "SERIALIZABLE", "t_ms": 2.521, "thread": "T2-06_no_phantom_read"}
-{"scenario": "06_no_phantom_read", "tx": "T1", "step": "read count again", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 1, "isolation": "SERIALIZABLE", "t_ms": 2.67, "thread": "T1-06_no_phantom_read"}
-{"scenario": "06_no_phantom_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "SERIALIZABLE", "t_ms": 2.778, "thread": "T1-06_no_phantom_read"}
-{"scenario": "06_no_phantom_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 2, "isolation": null, "t_ms": 3.078, "thread": "MainThread"}
-{"scenario": "06_no_phantom_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "no phantom read: count 1 -> 1 (committed 2)", "isolation": "SERIALIZABLE", "t_ms": 3.148, "thread": "MainThread"}
+{"scenario": "01_dirty_read", "tx": "LAB", "step": "engine", "sql": null, "value": "H2 2.5.252 (2026-09-23)", "isolation": null, "t_ms": 0.002, "thread": "MainThread"}
+{"scenario": "01_dirty_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE account (id INT PRIMARY KEY, balance INT NOT NULL)", "value": null, "isolation": null, "t_ms": 71.601, "thread": "MainThread"}
+{"scenario": "01_dirty_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO account VALUES (1, 100)", "value": null, "isolation": null, "t_ms": 73.803, "thread": "MainThread"}
+{"scenario": "01_dirty_read", "tx": "T1", "step": "begin", "sql": null, "value": "READ UNCOMMITTED", "isolation": "READ UNCOMMITTED", "t_ms": 74.672, "thread": "T1-01_dirty_read"}
+{"scenario": "01_dirty_read", "tx": "T2", "step": "begin", "sql": null, "value": "READ UNCOMMITTED", "isolation": "READ UNCOMMITTED", "t_ms": 75.136, "thread": "T2-01_dirty_read"}
+{"scenario": "01_dirty_read", "tx": "T1", "step": "read before", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ UNCOMMITTED", "t_ms": 81.802, "thread": "T1-01_dirty_read"}
+{"scenario": "01_dirty_read", "tx": "T2", "step": "update (uncommitted)", "sql": "UPDATE account SET balance = 200 WHERE id = 1", "value": "1 row(s)", "isolation": "READ UNCOMMITTED", "t_ms": 82.882, "thread": "T2-01_dirty_read"}
+{"scenario": "01_dirty_read", "tx": "T1", "step": "read during", "sql": "SELECT balance FROM account WHERE id = 1", "value": 200, "isolation": "READ UNCOMMITTED", "t_ms": 83.113, "thread": "T1-01_dirty_read"}
+{"scenario": "01_dirty_read", "tx": "T2", "step": "rollback", "sql": "ROLLBACK", "value": null, "isolation": "READ UNCOMMITTED", "t_ms": 83.416, "thread": "T2-01_dirty_read"}
+{"scenario": "01_dirty_read", "tx": "T1", "step": "read after", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ UNCOMMITTED", "t_ms": 83.615, "thread": "T1-01_dirty_read"}
+{"scenario": "01_dirty_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "READ UNCOMMITTED", "t_ms": 83.732, "thread": "T1-01_dirty_read"}
+{"scenario": "01_dirty_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": null, "t_ms": 84.078, "thread": "MainThread"}
+{"scenario": "01_dirty_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "dirty read observed: 100 -> 200 (uncommitted) -> 100 after rollback", "isolation": "READ UNCOMMITTED", "t_ms": 84.189, "thread": "MainThread"}
+{"scenario": "02_no_dirty_read", "tx": "LAB", "step": "engine", "sql": null, "value": "H2 2.5.252 (2026-09-23)", "isolation": null, "t_ms": 0.001, "thread": "MainThread"}
+{"scenario": "02_no_dirty_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE account (id INT PRIMARY KEY, balance INT NOT NULL)", "value": null, "isolation": null, "t_ms": 1.439, "thread": "MainThread"}
+{"scenario": "02_no_dirty_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO account VALUES (1, 100)", "value": null, "isolation": null, "t_ms": 1.688, "thread": "MainThread"}
+{"scenario": "02_no_dirty_read", "tx": "T1", "step": "begin", "sql": null, "value": "READ COMMITTED", "isolation": "READ COMMITTED", "t_ms": 2.347, "thread": "T1-02_no_dirty_read"}
+{"scenario": "02_no_dirty_read", "tx": "T2", "step": "begin", "sql": null, "value": "READ COMMITTED", "isolation": "READ COMMITTED", "t_ms": 2.477, "thread": "T2-02_no_dirty_read"}
+{"scenario": "02_no_dirty_read", "tx": "T1", "step": "read before", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ COMMITTED", "t_ms": 2.636, "thread": "T1-02_no_dirty_read"}
+{"scenario": "02_no_dirty_read", "tx": "T2", "step": "update (uncommitted)", "sql": "UPDATE account SET balance = 200 WHERE id = 1", "value": "1 row(s)", "isolation": "READ COMMITTED", "t_ms": 8.249, "thread": "T2-02_no_dirty_read"}
+{"scenario": "02_no_dirty_read", "tx": "T1", "step": "read during", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ COMMITTED", "t_ms": 8.507, "thread": "T1-02_no_dirty_read"}
+{"scenario": "02_no_dirty_read", "tx": "T2", "step": "rollback", "sql": "ROLLBACK", "value": null, "isolation": "READ COMMITTED", "t_ms": 8.76, "thread": "T2-02_no_dirty_read"}
+{"scenario": "02_no_dirty_read", "tx": "T1", "step": "read after", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ COMMITTED", "t_ms": 8.987, "thread": "T1-02_no_dirty_read"}
+{"scenario": "02_no_dirty_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "READ COMMITTED", "t_ms": 9.117, "thread": "T1-02_no_dirty_read"}
+{"scenario": "02_no_dirty_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": null, "t_ms": 9.421, "thread": "MainThread"}
+{"scenario": "02_no_dirty_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "no dirty read: 100 -> 100 while T2 held uncommitted 200", "isolation": "READ COMMITTED", "t_ms": 9.529, "thread": "MainThread"}
+{"scenario": "03_non_repeatable_read", "tx": "LAB", "step": "engine", "sql": null, "value": "H2 2.5.252 (2026-09-23)", "isolation": null, "t_ms": 0.001, "thread": "MainThread"}
+{"scenario": "03_non_repeatable_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE account (id INT PRIMARY KEY, balance INT NOT NULL)", "value": null, "isolation": null, "t_ms": 1.311, "thread": "MainThread"}
+{"scenario": "03_non_repeatable_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO account VALUES (1, 100)", "value": null, "isolation": null, "t_ms": 1.558, "thread": "MainThread"}
+{"scenario": "03_non_repeatable_read", "tx": "T1", "step": "begin", "sql": null, "value": "READ COMMITTED", "isolation": "READ COMMITTED", "t_ms": 2.223, "thread": "T1-03_non_repeatable_read"}
+{"scenario": "03_non_repeatable_read", "tx": "T2", "step": "begin", "sql": null, "value": "READ COMMITTED", "isolation": "READ COMMITTED", "t_ms": 2.375, "thread": "T2-03_non_repeatable_read"}
+{"scenario": "03_non_repeatable_read", "tx": "T1", "step": "read first", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "READ COMMITTED", "t_ms": 2.518, "thread": "T1-03_non_repeatable_read"}
+{"scenario": "03_non_repeatable_read", "tx": "T2", "step": "update", "sql": "UPDATE account SET balance = 300 WHERE id = 1", "value": "1 row(s)", "isolation": "READ COMMITTED", "t_ms": 2.849, "thread": "T2-03_non_repeatable_read"}
+{"scenario": "03_non_repeatable_read", "tx": "T2", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "READ COMMITTED", "t_ms": 3.005, "thread": "T2-03_non_repeatable_read"}
+{"scenario": "03_non_repeatable_read", "tx": "T1", "step": "read again", "sql": "SELECT balance FROM account WHERE id = 1", "value": 300, "isolation": "READ COMMITTED", "t_ms": 3.206, "thread": "T1-03_non_repeatable_read"}
+{"scenario": "03_non_repeatable_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "READ COMMITTED", "t_ms": 3.326, "thread": "T1-03_non_repeatable_read"}
+{"scenario": "03_non_repeatable_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT balance FROM account WHERE id = 1", "value": 300, "isolation": null, "t_ms": 3.624, "thread": "MainThread"}
+{"scenario": "03_non_repeatable_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "non-repeatable read observed: 100 -> 300", "isolation": "READ COMMITTED", "t_ms": 3.716, "thread": "MainThread"}
+{"scenario": "04_no_non_repeatable_read", "tx": "LAB", "step": "engine", "sql": null, "value": "H2 2.5.252 (2026-09-23)", "isolation": null, "t_ms": 0.001, "thread": "MainThread"}
+{"scenario": "04_no_non_repeatable_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE account (id INT PRIMARY KEY, balance INT NOT NULL)", "value": null, "isolation": null, "t_ms": 1.151, "thread": "MainThread"}
+{"scenario": "04_no_non_repeatable_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO account VALUES (1, 100)", "value": null, "isolation": null, "t_ms": 1.405, "thread": "MainThread"}
+{"scenario": "04_no_non_repeatable_read", "tx": "T1", "step": "begin", "sql": null, "value": "REPEATABLE READ", "isolation": "REPEATABLE READ", "t_ms": 1.936, "thread": "T1-04_no_non_repeatable_read"}
+{"scenario": "04_no_non_repeatable_read", "tx": "T2", "step": "begin", "sql": null, "value": "REPEATABLE READ", "isolation": "REPEATABLE READ", "t_ms": 2.139, "thread": "T2-04_no_non_repeatable_read"}
+{"scenario": "04_no_non_repeatable_read", "tx": "T1", "step": "read first", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "REPEATABLE READ", "t_ms": 2.49, "thread": "T1-04_no_non_repeatable_read"}
+{"scenario": "04_no_non_repeatable_read", "tx": "T2", "step": "update", "sql": "UPDATE account SET balance = 300 WHERE id = 1", "value": "1 row(s)", "isolation": "REPEATABLE READ", "t_ms": 2.829, "thread": "T2-04_no_non_repeatable_read"}
+{"scenario": "04_no_non_repeatable_read", "tx": "T2", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "REPEATABLE READ", "t_ms": 3.006, "thread": "T2-04_no_non_repeatable_read"}
+{"scenario": "04_no_non_repeatable_read", "tx": "T1", "step": "read again", "sql": "SELECT balance FROM account WHERE id = 1", "value": 100, "isolation": "REPEATABLE READ", "t_ms": 3.202, "thread": "T1-04_no_non_repeatable_read"}
+{"scenario": "04_no_non_repeatable_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "REPEATABLE READ", "t_ms": 3.338, "thread": "T1-04_no_non_repeatable_read"}
+{"scenario": "04_no_non_repeatable_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT balance FROM account WHERE id = 1", "value": 300, "isolation": null, "t_ms": 3.641, "thread": "MainThread"}
+{"scenario": "04_no_non_repeatable_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "no non-repeatable read: 100 -> 100 (committed 300)", "isolation": "REPEATABLE READ", "t_ms": 3.738, "thread": "MainThread"}
+{"scenario": "05_phantom_read", "tx": "LAB", "step": "engine", "sql": null, "value": "H2 2.5.252 (2026-09-23)", "isolation": null, "t_ms": 0.001, "thread": "MainThread"}
+{"scenario": "05_phantom_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE item (id INT PRIMARY KEY, category VARCHAR(16) NOT NULL)", "value": null, "isolation": null, "t_ms": 1.18, "thread": "MainThread"}
+{"scenario": "05_phantom_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO item VALUES (1, 'book')", "value": null, "isolation": null, "t_ms": 1.492, "thread": "MainThread"}
+{"scenario": "05_phantom_read", "tx": "T1", "step": "begin", "sql": null, "value": "REPEATABLE READ", "isolation": "REPEATABLE READ", "t_ms": 2.097, "thread": "T1-05_phantom_read"}
+{"scenario": "05_phantom_read", "tx": "T2", "step": "begin", "sql": null, "value": "REPEATABLE READ", "isolation": "REPEATABLE READ", "t_ms": 2.237, "thread": "T2-05_phantom_read"}
+{"scenario": "05_phantom_read", "tx": "T1", "step": "read count", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 1, "isolation": "REPEATABLE READ", "t_ms": 3.642, "thread": "T1-05_phantom_read"}
+{"scenario": "05_phantom_read", "tx": "T2", "step": "insert", "sql": "INSERT INTO item VALUES (2, 'book')", "value": "1 row(s)", "isolation": "REPEATABLE READ", "t_ms": 3.896, "thread": "T2-05_phantom_read"}
+{"scenario": "05_phantom_read", "tx": "T2", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "REPEATABLE READ", "t_ms": 4.058, "thread": "T2-05_phantom_read"}
+{"scenario": "05_phantom_read", "tx": "T1", "step": "read count again", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 1, "isolation": "REPEATABLE READ", "t_ms": 4.302, "thread": "T1-05_phantom_read"}
+{"scenario": "05_phantom_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "REPEATABLE READ", "t_ms": 4.419, "thread": "T1-05_phantom_read"}
+{"scenario": "05_phantom_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 2, "isolation": null, "t_ms": 4.748, "thread": "MainThread"}
+{"scenario": "05_phantom_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "phantom not reproduced on H2 2.5.252: count 1 -> 1 (committed 2)", "isolation": "REPEATABLE READ", "t_ms": 4.848, "thread": "MainThread"}
+{"scenario": "06_no_phantom_read", "tx": "LAB", "step": "engine", "sql": null, "value": "H2 2.5.252 (2026-09-23)", "isolation": null, "t_ms": 0.001, "thread": "MainThread"}
+{"scenario": "06_no_phantom_read", "tx": "LAB", "step": "setup", "sql": "CREATE TABLE item (id INT PRIMARY KEY, category VARCHAR(16) NOT NULL)", "value": null, "isolation": null, "t_ms": 1.284, "thread": "MainThread"}
+{"scenario": "06_no_phantom_read", "tx": "LAB", "step": "setup", "sql": "INSERT INTO item VALUES (1, 'book')", "value": null, "isolation": null, "t_ms": 2.361, "thread": "MainThread"}
+{"scenario": "06_no_phantom_read", "tx": "T1", "step": "begin", "sql": null, "value": "SERIALIZABLE", "isolation": "SERIALIZABLE", "t_ms": 3.052, "thread": "T1-06_no_phantom_read"}
+{"scenario": "06_no_phantom_read", "tx": "T2", "step": "begin", "sql": null, "value": "SERIALIZABLE", "isolation": "SERIALIZABLE", "t_ms": 3.187, "thread": "T2-06_no_phantom_read"}
+{"scenario": "06_no_phantom_read", "tx": "T1", "step": "read count", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 1, "isolation": "SERIALIZABLE", "t_ms": 3.335, "thread": "T1-06_no_phantom_read"}
+{"scenario": "06_no_phantom_read", "tx": "T2", "step": "insert", "sql": "INSERT INTO item VALUES (2, 'book')", "value": "1 row(s)", "isolation": "SERIALIZABLE", "t_ms": 3.573, "thread": "T2-06_no_phantom_read"}
+{"scenario": "06_no_phantom_read", "tx": "T2", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "SERIALIZABLE", "t_ms": 3.725, "thread": "T2-06_no_phantom_read"}
+{"scenario": "06_no_phantom_read", "tx": "T1", "step": "read count again", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 1, "isolation": "SERIALIZABLE", "t_ms": 3.9, "thread": "T1-06_no_phantom_read"}
+{"scenario": "06_no_phantom_read", "tx": "T1", "step": "commit", "sql": "COMMIT", "value": null, "isolation": "SERIALIZABLE", "t_ms": 4.01, "thread": "T1-06_no_phantom_read"}
+{"scenario": "06_no_phantom_read", "tx": "LAB", "step": "verify committed", "sql": "SELECT COUNT(*) FROM item WHERE category = 'book'", "value": 2, "isolation": null, "t_ms": 4.339, "thread": "MainThread"}
+{"scenario": "06_no_phantom_read", "tx": "LAB", "step": "outcome", "sql": null, "value": "no phantom read: count 1 -> 1 (committed 2)", "isolation": "SERIALIZABLE", "t_ms": 4.41, "thread": "MainThread"}

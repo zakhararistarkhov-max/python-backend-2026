@@ -15,6 +15,17 @@ class ScenarioFailed(Exception):
     """Raised when a scenario times out, errors or observes unexpected data."""
 
 
+def read_int(connection, sql):
+    statement = connection.createStatement()
+    try:
+        result = statement.executeQuery(sql)
+        if not result.next():
+            raise ScenarioFailed(f"no rows for {sql}")
+        return int(result.getInt(1))
+    finally:
+        statement.close()
+
+
 class Tx:
     """One JDBC connection running a single explicit transaction."""
 
@@ -38,14 +49,11 @@ class Tx:
         self.log("begin", value=actual)
 
     def query_int(self, step, sql):
-        statement = self.connection.createStatement()
         try:
-            result = statement.executeQuery(sql)
-            if not result.next():
-                raise ScenarioFailed(f"{self.name}: no rows for {sql}")
-            value = int(result.getInt(1))
-        finally:
-            statement.close()
+            value = read_int(self.connection, sql)
+        except Exception as exc:
+            self.log(f"{step} failed", sql, f"{type(exc).__name__}: {exc}")
+            raise
         self.log(step, sql, value)
         return value
 
@@ -53,6 +61,9 @@ class Tx:
         statement = self.connection.createStatement()
         try:
             rows = int(statement.executeUpdate(sql))
+        except Exception as exc:
+            self.log(f"{step} failed", sql, f"{type(exc).__name__}: {exc}")
+            raise
         finally:
             statement.close()
         self.log(step, sql, f"{rows} row(s)")
@@ -87,8 +98,9 @@ class Scenario:
     setup_sql = ()
     outcome = ""
 
-    def __init__(self, journal, connect, step_timeout=10.0):
+    def __init__(self, journal, connect, step_timeout=10.0, h2_version=""):
         self.journal = journal
+        self.h2_version = h2_version
         self.connect = connect
         self.step_timeout = step_timeout
         self.database = f"{self.name}_{uuid.uuid4().hex[:8]}"
@@ -124,13 +136,7 @@ class Scenario:
         self.journal.record("LAB", step, sql=sql, value=value, isolation=isolation)
 
     def committed(self, sql):
-        statement = self.setup.createStatement()
-        try:
-            result = statement.executeQuery(sql)
-            result.next()
-            value = int(result.getInt(1))
-        finally:
-            statement.close()
+        value = read_int(self.setup, sql)
         self.lab("verify committed", sql, value)
         return value
 
@@ -145,6 +151,7 @@ class Scenario:
     def run(self):
         self.journal.begin(self.name)
         try:
+            self.lab("engine", value=f"H2 {self.h2_version}")
             self.setup = self.connect(self.database)
             statement = self.setup.createStatement()
             for sql in self.setup_sql:
@@ -169,7 +176,7 @@ class Scenario:
             if self.errors:
                 raise ScenarioFailed("; ".join(self.errors))
             self.check()
-            result = self.outcome.format(**self.observed)
+            result = self.outcome.format(h2=self.h2_version.split(" ")[0], **self.observed)
             self.lab("outcome", value=result, isolation=self.isolation)
             return result
         except BaseException as exc:
@@ -338,7 +345,7 @@ class PhantomRead(PhantomFlow):
 
     name = "05_phantom_read"
     isolation = "REPEATABLE READ"
-    outcome = "phantom not reproduced on H2 2.5.252: count {first} -> {second} (committed {committed})"
+    outcome = "phantom not reproduced on H2 {h2}: count {first} -> {second} (committed {committed})"
 
 
 class NoPhantomRead(PhantomFlow):
