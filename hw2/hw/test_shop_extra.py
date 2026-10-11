@@ -96,6 +96,32 @@ def test_post_item_rejects_non_finite_price(client: TestClient) -> None:
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
 
 
+@pytest.mark.parametrize("price", [True, False, "5", "1.5"])
+@pytest.mark.parametrize("method", ["post", "put", "patch"])
+def test_item_price_rejects_bools_and_strings(
+    client: TestClient, method: str, price: object
+) -> None:
+    item_id = create_item(client, "x", 3.0)
+    path = "/item" if method == "post" else f"/item/{item_id}"
+
+    response = client.request(method, path, json={"name": "y", "price": price})
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert client.get("/item").json() == [
+        {"id": item_id, "name": "x", "price": 3.0, "deleted": False}
+    ]
+
+
+@pytest.mark.parametrize("method", ["put", "patch"])
+def test_item_price_accepts_integers(client: TestClient, method: str) -> None:
+    item_id = create_item(client, "x", 3.0)
+
+    response = client.request(method, f"/item/{item_id}", json={"name": "x", "price": 7})
+
+    assert response.status_code == HTTPStatus.OK
+    assert response.json()["price"] == 7.0
+
+
 def test_post_item_accepts_zero_price(client: TestClient) -> None:
     response = client.post("/item", json={"name": "free", "price": 0})
 
@@ -204,6 +230,23 @@ def test_patch_rejects_null_fields(client: TestClient) -> None:
 
     assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
     assert client.get(f"/item/{item_id}").json()["name"] == "kept"
+
+
+def test_patch_rejects_null_price(client: TestClient) -> None:
+    item_id = create_item(client, price=4.0)
+
+    response = client.patch(f"/item/{item_id}", json={"price": None})
+
+    assert response.status_code == HTTPStatus.UNPROCESSABLE_ENTITY
+    assert client.get(f"/item/{item_id}").json()["price"] == 4.0
+
+
+def test_patch_with_empty_body_keeps_item(client: TestClient) -> None:
+    item_id = create_item(client, "a", 5.0)
+
+    response = client.patch(f"/item/{item_id}", json={})
+
+    assert response.json() == {"id": item_id, "name": "a", "price": 5.0, "deleted": False}
 
 
 def test_patch_changes_only_given_fields(client: TestClient) -> None:
@@ -449,36 +492,67 @@ def test_chat_message_format_keeps_separator_in_text(client: TestClient) -> None
     assert text == "a :: b"
 
 
-def test_chat_removes_disconnected_clients_and_empty_rooms(client: TestClient) -> None:
-    rooms: ChatRoomManager = main.chat_rooms
-
+def test_chat_keeps_rooms_separate_after_clients_leave(client: TestClient) -> None:
     with client.websocket_connect("/chat/stay") as stayer:
         with client.websocket_connect("/chat/stay") as leaver:
             leaver.send_text("bye")
-            parse(stayer.receive_text())
-            assert rooms.size("stay") == 2
+            leaver_name, text = parse(stayer.receive_text())
+            assert text == "bye"
 
-        with client.websocket_connect("/chat/other") as other:
+        with (
+            client.websocket_connect("/chat/other") as other,
+            client.websocket_connect("/chat/stay") as newcomer,
+        ):
             other.send_text("ping")
             stayer.send_text("still here")
-            assert rooms.size("stay") == 1
-            assert rooms.size("other") == 1
+            stayer_name, text = parse(newcomer.receive_text())
+            assert text == "still here"
 
-    assert rooms.size("stay") == 0
-    assert rooms.size("other") == 0
-    assert rooms.room_names() == []
+            newcomer.send_text("welcome")
+            newcomer_name, text = parse(stayer.receive_text())
+            assert text == "welcome"
+            assert len({leaver_name, stayer_name, newcomer_name}) == 3
+
+
+def test_chat_closes_connection_on_binary_frame(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rooms: ChatRoomManager = main.chat_rooms
+    disconnected = []
+    original = rooms.disconnect
+
+    def spy(room: str, websocket: object) -> None:
+        disconnected.append(room)
+        original(room, websocket)
+
+    monkeypatch.setattr(rooms, "disconnect", spy)
+
+    with client.websocket_connect("/chat/bin") as peer:
+        with client.websocket_connect("/chat/bin") as sender:
+            sender.send_bytes(b"\x00\x01")
+            message = sender.receive()
+
+        assert message["type"] == "websocket.close"
+        assert message["code"] == 1003
+        assert disconnected == ["bin"]
+
+        with client.websocket_connect("/chat/bin") as other:
+            other.send_text("after")
+            assert parse(peer.receive_text())[1] == "after"
 
 
 class FakeSocket:
     def __init__(self, broken: bool = False) -> None:
         self.broken = broken
         self.accepted = False
+        self.attempts = 0
         self.sent: list[str] = []
 
     async def accept(self) -> None:
         self.accepted = True
 
     async def send_text(self, text: str) -> None:
+        self.attempts += 1
         if self.broken:
             raise RuntimeError("socket is closed")
         self.sent.append(text)
@@ -497,6 +571,46 @@ def test_chat_broadcast_survives_dead_socket() -> None:
         assert sender.accepted and dead.accepted and alive.accepted
         assert alive.sent == [f"{sender_name} :: msg"]
         assert sender.sent == []
-        assert rooms.size("r") == 2
+
+        await rooms.broadcast("r", sender, "again")
+
+        assert dead.attempts == 1
+        assert alive.sent == [f"{sender_name} :: msg", f"{sender_name} :: again"]
+
+    asyncio.run(scenario())
+
+
+def test_chat_disconnected_client_stops_receiving() -> None:
+    async def scenario() -> None:
+        rooms = ChatRoomManager()
+        sender, leaver, stayer, outsider = FakeSocket(), FakeSocket(), FakeSocket(), FakeSocket()
+        sender_name = await rooms.connect("r", sender)
+        await rooms.connect("r", leaver)
+        await rooms.connect("r", stayer)
+        await rooms.connect("elsewhere", outsider)
+
+        rooms.disconnect("r", leaver)
+        await rooms.broadcast("r", sender, "msg")
+
+        assert leaver.sent == []
+        assert stayer.sent == [f"{sender_name} :: msg"]
+        assert outsider.sent == []
+
+    asyncio.run(scenario())
+
+
+def test_chat_ignores_messages_from_unknown_or_disconnected_sender() -> None:
+    async def scenario() -> None:
+        rooms = ChatRoomManager()
+        sender, receiver = FakeSocket(), FakeSocket()
+        await rooms.connect("r", sender)
+        await rooms.connect("r", receiver)
+
+        rooms.disconnect("r", sender)
+        rooms.disconnect("missing", sender)
+        await rooms.broadcast("r", sender, "lost")
+        await rooms.broadcast("missing", sender, "lost")
+
+        assert receiver.sent == []
 
     asyncio.run(scenario())

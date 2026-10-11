@@ -36,9 +36,3 @@ class ChatRoomManager:
                 await websocket.send_text(text)
             except Exception:
                 self.disconnect(room, websocket)
-
-    def size(self, room: str) -> int:
-        return len(self._rooms.get(room, {}))
-
-    def room_names(self) -> list[str]:
-        return list(self._rooms)

@@ -1,7 +1,7 @@
 from http import HTTPStatus
 from typing import Annotated
 
-from fastapi import FastAPI, Query, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -117,8 +117,14 @@ async def chat(websocket: WebSocket, chat_name: str) -> None:
     await chat_rooms.connect(chat_name, websocket)
     try:
         while True:
-            message = await websocket.receive_text()
-            await chat_rooms.broadcast(chat_name, websocket, message)
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                break
+            text = message.get("text")
+            if text is None:
+                await websocket.close(code=status.WS_1003_UNSUPPORTED_DATA)
+                break
+            await chat_rooms.broadcast(chat_name, websocket, text)
     except WebSocketDisconnect:
         pass
     finally:

@@ -1,8 +1,8 @@
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Price = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+Price = Annotated[float, Field(ge=0, allow_inf_nan=False, strict=True)]
 
 
 class ItemRequest(BaseModel):
@@ -19,8 +19,15 @@ class PatchItemRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    name: str = None
-    price: Price = None
+    name: str | None = None
+    price: Price | None = None
+
+    @field_validator("name", "price", mode="before")
+    @classmethod
+    def reject_null(cls, value: object) -> object:
+        if value is None:
+            raise ValueError("Field may be omitted but not null")
+        return value
 
 
 class ItemResponse(BaseModel):

@@ -2,14 +2,13 @@ name: "HW2 CI"
 
 on:
   push:
-    branches: [ '**' ]
     paths:
-      - 'hw2/hw/**'
-      - '.github/workflows/hw2-ci.yml'
+      - "hw2/hw/**"
+      - ".github/workflows/hw2-ci.yml"
   pull_request:
     paths:
-      - 'hw2/hw/**'
-      - '.github/workflows/hw2-ci.yml'
+      - "hw2/hw/**"
+      - ".github/workflows/hw2-ci.yml"
 
 jobs:
   test:
