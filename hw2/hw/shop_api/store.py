@@ -1,9 +1,17 @@
 import math
-from dataclasses import dataclass, field
-from threading import Lock
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
+
+from sqlalchemy import Engine, Row, Select, func, select, update
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.orm import Session, sessionmaker
 
 from .contracts import CartItemResponse, CartResponse, ItemResponse
 from .metrics import ShopMetrics, shop_metrics
+from .models import Base, CartItemRow, CartRow, ItemRow
+
+MAX_KEY = 2**63 - 1
+UPSERT_INSERTS = {"postgresql": postgresql.insert, "sqlite": sqlite.insert}
 
 
 class NotFoundError(Exception):
@@ -18,46 +26,38 @@ class PriceOverflowError(Exception):
     """Operation would make a cart price non-finite."""
 
 
-@dataclass(slots=True)
-class Item:
-    """Stored item."""
-
-    id: int
-    name: str
-    price: float
-    deleted: bool = False
-
-
-@dataclass(slots=True)
-class Cart:
-    """Stored cart with item quantities keyed by item id."""
-
-    id: int
-    quantities: dict[int, int] = field(default_factory=dict)
-
-
 class ShopStore:
-    """Thread-safe in-memory storage for items and carts."""
+    """Transactional SQL storage for items and carts."""
 
-    def __init__(self, metrics: ShopMetrics = shop_metrics) -> None:
+    def __init__(self, engine: Engine, metrics: ShopMetrics = shop_metrics) -> None:
+        if engine.dialect.name not in UPSERT_INSERTS:
+            raise ValueError(f"Unsupported database dialect: {engine.dialect.name}")
+        self._engine = engine
         self._metrics = metrics
-        self._lock = Lock()
-        self._items: dict[int, Item] = {}
-        self._carts: dict[int, Cart] = {}
-        self._last_item_id = 0
-        self._last_cart_id = 0
+        self._sessions = sessionmaker(engine, expire_on_commit=False)
+        self._insert = UPSERT_INSERTS[engine.dialect.name]
+
+    def create_schema(self) -> None:
+        Base.metadata.create_all(self._engine)
+
+    def dispose(self) -> None:
+        self._engine.dispose()
 
     def create_item(self, name: str, price: float) -> ItemResponse:
-        with self._metrics.stage("create_item"), self._lock:
-            self._last_item_id += 1
-            item = Item(self._last_item_id, name, price)
-            self._items[item.id] = item
-            self._metrics.item_created()
-            return self._item_response(item)
+        with self._metrics.stage("create_item"), self._sessions.begin() as session:
+            item = ItemRow(name=name, price=price, deleted=False)
+            session.add(item)
+            session.flush()
+            response = _item_response(item)
+        self._metrics.item_created()
+        return response
 
     def get_item(self, item_id: int) -> ItemResponse:
-        with self._lock:
-            return self._item_response(self._active_item(item_id))
+        with self._sessions.begin() as session:
+            item = _find(session, ItemRow, item_id)
+            if item is None or item.deleted:
+                raise NotFoundError
+            return _item_response(item)
 
     def list_items(
         self,
@@ -67,50 +67,54 @@ class ShopStore:
         max_price: float | None,
         show_deleted: bool,
     ) -> list[ItemResponse]:
-        with self._metrics.stage("list_items"), self._lock:
-            items = [
-                item
-                for item in self._items.values()
-                if (show_deleted or not item.deleted)
-                and _in_range(item.price, min_price, max_price)
-            ]
-            return [self._item_response(item) for item in items[offset : offset + limit]]
+        query = select(ItemRow).order_by(ItemRow.id).offset(_clamp(offset)).limit(_clamp(limit))
+        if not show_deleted:
+            query = query.where(ItemRow.deleted.is_(False))
+        if min_price is not None:
+            query = query.where(ItemRow.price >= min_price)
+        if max_price is not None:
+            query = query.where(ItemRow.price <= max_price)
+        with self._metrics.stage("list_items"), self._sessions.begin() as session:
+            return [_item_response(item) for item in session.scalars(query)]
 
     def update_item(
         self, item_id: int, name: str | None = None, price: float | None = None
     ) -> ItemResponse:
-        with self._metrics.stage("update_item"), self._lock:
-            item = self._items.get(item_id)
+        with self._metrics.stage("update_item"), self._sessions.begin() as session:
+            item = _find(session, ItemRow, item_id, lock=True)
             if item is None:
                 raise NotFoundError
             if item.deleted:
                 raise NotModifiedError
             if price is not None:
-                self._check_price_change(item, price)
+                self._check_price_change(session, item_id, price)
                 item.price = price
             if name is not None:
                 item.name = name
-            return self._item_response(item)
+            session.flush()
+            return _item_response(item)
 
     def delete_item(self, item_id: int) -> None:
-        with self._metrics.stage("delete_item"), self._lock:
-            item = self._items.get(item_id)
-            if item is None:
+        statement = update(ItemRow).where(ItemRow.id == item_id).values(deleted=True)
+        with self._metrics.stage("delete_item"), self._sessions.begin() as session:
+            if not _fits(item_id) or session.execute(statement).rowcount == 0:
                 raise NotFoundError
-            item.deleted = True
         self._metrics.item_deleted()
 
     def create_cart(self) -> int:
-        with self._metrics.stage("create_cart"), self._lock:
-            self._last_cart_id += 1
-            cart_id = self._last_cart_id
-            self._carts[cart_id] = Cart(cart_id)
+        with self._metrics.stage("create_cart"), self._sessions.begin() as session:
+            cart = CartRow()
+            session.add(cart)
+            session.flush()
+            cart_id = cart.id
         self._metrics.cart_created()
         return cart_id
 
     def get_cart(self, cart_id: int) -> CartResponse:
-        with self._lock:
-            return self._cart_response(self._cart(cart_id))
+        with self._sessions.begin() as session:
+            if _find(session, CartRow, cart_id) is None:
+                raise NotFoundError
+            return self._cart_response(cart_id, self._lines(session, [cart_id])[cart_id])
 
     def list_carts(
         self,
@@ -121,87 +125,149 @@ class ShopStore:
         min_quantity: int | None,
         max_quantity: int | None,
     ) -> list[CartResponse]:
-        with self._metrics.stage("list_carts"), self._lock:
-            carts = [
-                cart
-                for cart in self._carts.values()
-                if _in_range(self._cart_price(cart.quantities), min_price, max_price)
-                and _in_range(sum(cart.quantities.values()), min_quantity, max_quantity)
-            ]
-            return [self._cart_response(cart) for cart in carts[offset : offset + limit]]
+        total = func.coalesce(func.sum(CartItemRow.quantity), 0)
+        query: Select = (
+            select(CartRow.id).outerjoin(CartItemRow).group_by(CartRow.id).order_by(CartRow.id)
+        )
+        if min_quantity is not None:
+            if min_quantity > MAX_KEY:
+                return []
+            query = query.having(total >= min_quantity)
+        if max_quantity is not None and max_quantity <= MAX_KEY:
+            query = query.having(total <= max_quantity)
+        filter_price = min_price is not None or max_price is not None
+        if not filter_price:
+            query = query.offset(_clamp(offset)).limit(_clamp(limit))
+        with self._metrics.stage("list_carts"), self._sessions.begin() as session:
+            cart_ids = list(session.scalars(query))
+            lines = self._lines(session, cart_ids)
+            if filter_price:
+                cart_ids = [
+                    cart_id
+                    for cart_id in cart_ids
+                    if _in_range(_cart_price(lines[cart_id]), min_price, max_price)
+                ][offset : offset + limit]
+            return [self._cart_response(cart_id, lines[cart_id]) for cart_id in cart_ids]
 
     def add_to_cart(self, cart_id: int, item_id: int) -> CartResponse:
-        with self._metrics.stage("add_to_cart"), self._lock:
-            cart = self._carts.get(cart_id)
-            if cart is None:
+        with self._metrics.stage("add_to_cart"), self._sessions.begin() as session:
+            item = _find(session, ItemRow, item_id, lock=True, shared=True)
+            if _find(session, CartRow, cart_id, lock=True) is None:
                 self._metrics.cart_add_rejected("missing_cart")
                 raise NotFoundError
-            item = self._items.get(item_id)
             if item is None or item.deleted:
                 self._metrics.cart_add_rejected("missing_item")
                 raise NotFoundError
-            quantities = dict(cart.quantities)
-            quantities[item.id] = quantities.get(item.id, 0) + 1
-            if not math.isfinite(self._cart_price(quantities)):
+            lines = self._lines(session, [cart_id])[cart_id]
+            if not math.isfinite(_total([*_line_prices(lines), item.price])):
                 self._metrics.cart_add_rejected("overflow")
                 raise PriceOverflowError
-            cart.quantities = quantities
-            self._metrics.cart_add_accepted()
-            return self._cart_response(cart)
+            session.execute(
+                self._insert(CartItemRow)
+                .values(cart_id=cart_id, item_id=item_id, quantity=1)
+                .on_conflict_do_update(
+                    index_elements=[CartItemRow.cart_id, CartItemRow.item_id],
+                    set_={"quantity": CartItemRow.quantity + 1},
+                )
+            )
+            response = self._cart_response(cart_id, self._lines(session, [cart_id])[cart_id])
+        self._metrics.cart_add_accepted()
+        return response
 
-    def _active_item(self, item_id: int) -> Item:
-        item = self._items.get(item_id)
-        if item is None or item.deleted:
-            raise NotFoundError
-        return item
-
-    def _cart(self, cart_id: int) -> Cart:
-        cart = self._carts.get(cart_id)
-        if cart is None:
-            raise NotFoundError
-        return cart
-
-    def _check_price_change(self, item: Item, price: float) -> None:
-        for cart in self._carts.values():
-            if item.id in cart.quantities and not math.isfinite(
-                self._cart_price(cart.quantities, {item.id: price})
-            ):
+    def _check_price_change(self, session: Session, item_id: int, price: float) -> None:
+        cart_ids = list(
+            session.scalars(
+                select(CartRow.id)
+                .join(CartItemRow)
+                .where(CartItemRow.item_id == item_id)
+                .order_by(CartRow.id)
+                .with_for_update(of=CartRow)
+            )
+        )
+        for lines in self._lines(session, cart_ids).values():
+            if not math.isfinite(_cart_price(lines, {item_id: price})):
                 raise PriceOverflowError
 
-    def _cart_price(
-        self, quantities: dict[int, int], price_overrides: dict[int, float] | None = None
-    ) -> float:
-        overrides = price_overrides or {}
-        try:
-            return math.fsum(
-                overrides.get(item_id, self._items[item_id].price) * quantity
-                for item_id, quantity in quantities.items()
-                if not self._items[item_id].deleted
+    @staticmethod
+    def _lines(session: Session, cart_ids: Sequence[int]) -> dict[int, list[Row]]:
+        lines: dict[int, list[Row]] = defaultdict(list)
+        if not cart_ids:
+            return lines
+        rows = session.execute(
+            select(
+                CartItemRow.cart_id,
+                CartItemRow.quantity,
+                ItemRow.id,
+                ItemRow.name,
+                ItemRow.price,
+                ItemRow.deleted,
             )
-        except OverflowError:
-            return math.inf
+            .join(ItemRow, ItemRow.id == CartItemRow.item_id)
+            .where(CartItemRow.cart_id.in_(cart_ids))
+            .order_by(CartItemRow.cart_id, CartItemRow.item_id)
+        )
+        for row in rows:
+            lines[row.cart_id].append(row)
+        return lines
 
-    def _cart_response(self, cart: Cart) -> CartResponse:
+    def _cart_response(self, cart_id: int, lines: list[Row]) -> CartResponse:
         with self._metrics.stage("cart_snapshot"):
             response = CartResponse(
-                id=cart.id,
+                id=cart_id,
                 items=[
                     CartItemResponse(
-                        id=item_id,
-                        name=self._items[item_id].name,
-                        quantity=quantity,
-                        available=not self._items[item_id].deleted,
+                        id=line.id,
+                        name=line.name,
+                        quantity=line.quantity,
+                        available=not line.deleted,
                     )
-                    for item_id, quantity in cart.quantities.items()
+                    for line in lines
                 ],
-                price=self._cart_price(cart.quantities),
+                price=_cart_price(lines),
             )
         self._metrics.cart_returned(response)
         return response
 
-    @staticmethod
-    def _item_response(item: Item) -> ItemResponse:
-        return ItemResponse(id=item.id, name=item.name, price=item.price, deleted=item.deleted)
+
+def _find(
+    session: Session, model: type, key: int, lock: bool = False, shared: bool = False
+) -> object | None:
+    if not _fits(key):
+        return None
+    with_for_update = {"read": shared} if lock else None
+    return session.get(model, key, with_for_update=with_for_update)
+
+
+def _fits(key: int) -> bool:
+    return -MAX_KEY <= key <= MAX_KEY
+
+
+def _clamp(value: int) -> int:
+    return min(value, MAX_KEY)
+
+
+def _line_prices(
+    lines: Iterable[Row], price_overrides: dict[int, float] | None = None
+) -> Iterable[float]:
+    overrides = price_overrides or {}
+    return (
+        overrides.get(line.id, line.price) * line.quantity for line in lines if not line.deleted
+    )
+
+
+def _total(prices: Iterable[float]) -> float:
+    try:
+        return math.fsum(prices)
+    except OverflowError:
+        return math.inf
+
+
+def _cart_price(lines: Iterable[Row], price_overrides: dict[int, float] | None = None) -> float:
+    return _total(_line_prices(lines, price_overrides))
+
+
+def _item_response(item: ItemRow) -> ItemResponse:
+    return ItemResponse(id=item.id, name=item.name, price=item.price, deleted=item.deleted)
 
 
 def _in_range(value: float, low: float | None, high: float | None) -> bool:

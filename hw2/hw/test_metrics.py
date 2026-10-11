@@ -12,8 +12,8 @@ ID_IN_PATH_RE = re.compile(r"/\d+(/|$)")
 
 
 @pytest.fixture()
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setattr(main, "store", ShopStore())
+def client(monkeypatch: pytest.MonkeyPatch, store: ShopStore) -> TestClient:
+    monkeypatch.setattr(main, "store", store)
     return TestClient(main.app)
 
 

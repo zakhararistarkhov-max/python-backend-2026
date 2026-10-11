@@ -3,15 +3,36 @@ services:
     build:
       context: ./hw2/hw
       dockerfile: Dockerfile
-    image: shop-api:hw3
+    image: shop-api:hw4
+    environment:
+      DATABASE_URL: postgresql+psycopg://shop:shop@postgres:5432/shop
     ports:
       - "127.0.0.1:8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/metrics', timeout=2)"]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 5s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_PASSWORD: shop
+      POSTGRES_DB: shop
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "shop", "-d", "shop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   prometheus:
@@ -53,5 +74,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  pgdata:
   prometheus-data:
   grafana-data:
