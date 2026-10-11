@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Annotated
 
@@ -16,13 +18,23 @@ from .contracts import (
     ItemResponse,
     PatchItemRequest,
 )
+from .database import create_database_engine, database_url
 from .metrics import HTTP_LATENCY_BUCKETS
 from .store import NotFoundError, NotModifiedError, PriceOverflowError, ShopStore
 
 PriceQuery = Annotated[float | None, Query(ge=0, allow_inf_nan=False)]
 
-app = FastAPI(title="Shop API")
-store = ShopStore()
+store = ShopStore(create_database_engine(database_url()))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    store.create_schema()
+    yield
+    store.dispose()
+
+
+app = FastAPI(title="Shop API", lifespan=lifespan)
 chat_rooms = ChatRoomManager()
 Instrumentator(
     should_group_status_codes=False,

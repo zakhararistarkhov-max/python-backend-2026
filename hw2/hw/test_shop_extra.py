@@ -5,17 +5,21 @@ from http import HTTPStatus
 
 import pytest
 from fastapi.testclient import TestClient
+from prometheus_client import CollectorRegistry
+from sqlalchemy.exc import IntegrityError
 
 from shop_api import main
 from shop_api.chat import ChatRoomManager
+from shop_api.database import database_url
+from shop_api.metrics import ShopMetrics
 from shop_api.store import ShopStore
 
 MESSAGE_RE = re.compile(r"^(\S+) :: (.*)$")
 
 
 @pytest.fixture()
-def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    monkeypatch.setattr(main, "store", ShopStore())
+def client(monkeypatch: pytest.MonkeyPatch, store: ShopStore) -> TestClient:
+    monkeypatch.setattr(main, "store", store)
     monkeypatch.setattr(main, "chat_rooms", ChatRoomManager())
     return TestClient(main.app)
 
@@ -440,13 +444,89 @@ def test_concurrent_adds_do_not_lose_updates(client: TestClient) -> None:
     assert cart["price"] == workers * per_worker
 
 
-def test_concurrent_store_creates_have_unique_ids() -> None:
-    store = ShopStore()
-
+def test_concurrent_store_creates_have_unique_ids(store: ShopStore) -> None:
     with ThreadPoolExecutor(max_workers=8) as pool:
         ids = list(pool.map(lambda _: store.create_cart(), range(400)))
 
     assert sorted(ids) == list(range(1, 401))
+
+
+class SnapshotFailingMetrics(ShopMetrics):
+    """Metrics that can fail while a cart snapshot is built inside a transaction."""
+
+    def __init__(self) -> None:
+        super().__init__(CollectorRegistry())
+        self.failing = False
+
+    def cart_returned(self, cart: object) -> None:
+        if self.failing:
+            raise RuntimeError("snapshot failed")
+        super().cart_returned(cart)
+
+
+def test_failed_add_to_cart_rolls_back_whole_transaction(make_store) -> None:
+    metrics = SnapshotFailingMetrics()
+    store = make_store(metrics)
+    cart_id = store.create_cart()
+    item_id = store.create_item("x", 1.0).id
+
+    metrics.failing = True
+    with pytest.raises(RuntimeError):
+        store.add_to_cart(cart_id, item_id)
+    metrics.failing = False
+
+    assert store.get_cart(cart_id).items == []
+    assert store.add_to_cart(cart_id, item_id).items[0].quantity == 1
+
+
+def test_database_check_rejects_negative_price(store: ShopStore) -> None:
+    with pytest.raises(IntegrityError):
+        store.create_item("bad", -1.0)
+
+    assert store.list_items(0, 10, None, None, True) == []
+
+
+def test_data_survives_new_store_on_same_database(make_store) -> None:
+    store = make_store(name="shared.db")
+    item = store.create_item("kept", 2.5)
+    cart_id = store.create_cart()
+    store.add_to_cart(cart_id, item.id)
+    store.dispose()
+
+    reopened = make_store(name="shared.db")
+
+    assert reopened.get_item(item.id) == item
+    assert reopened.get_cart(cart_id).price == 2.5
+
+
+@pytest.mark.parametrize("key", [2**31, 2**63, 2**70, -(2**70)])
+def test_out_of_range_ids_are_not_found(client: TestClient, key: int) -> None:
+    item_id = create_item(client)
+    cart_id = create_cart(client)
+
+    assert client.get(f"/item/{key}").status_code == HTTPStatus.NOT_FOUND
+    assert client.get(f"/cart/{key}").status_code == HTTPStatus.NOT_FOUND
+    assert client.delete(f"/item/{key}").status_code == HTTPStatus.NOT_FOUND
+    assert client.patch(f"/item/{key}", json={"name": "x"}).status_code == HTTPStatus.NOT_FOUND
+    assert client.post(f"/cart/{key}/add/{item_id}").status_code == HTTPStatus.NOT_FOUND
+    assert client.post(f"/cart/{cart_id}/add/{key}").status_code == HTTPStatus.NOT_FOUND
+
+
+def test_huge_pagination_values_are_accepted(client: TestClient) -> None:
+    create_item(client)
+    create_cart(client)
+
+    assert client.get("/item", params={"offset": 2**70}).json() == []
+    assert len(client.get("/item", params={"limit": 2**70}).json()) == 1
+    assert client.get("/cart", params={"offset": 2**70}).json() == []
+    assert len(client.get("/cart", params={"limit": 2**70}).json()) == 1
+
+
+def test_database_url_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        database_url()
 
 
 def test_chat_broadcasts_to_others_in_same_room_only(client: TestClient) -> None:
