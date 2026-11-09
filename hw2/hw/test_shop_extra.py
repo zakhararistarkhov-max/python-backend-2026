@@ -1,5 +1,6 @@
 import asyncio
 import re
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from http import HTTPStatus
 
@@ -17,10 +18,12 @@ MESSAGE_RE = re.compile(r"^(\S+) :: (.*)$")
 
 
 @pytest.fixture()
-def client(monkeypatch: pytest.MonkeyPatch, store: ShopStore) -> TestClient:
+def client(monkeypatch: pytest.MonkeyPatch, store: ShopStore) -> Iterator[TestClient]:
     monkeypatch.setattr(main, "store", store)
     monkeypatch.setattr(main, "chat_rooms", ChatRoomManager())
-    return TestClient(main.app)
+    # WebSocket connections must share one event loop.
+    with TestClient(main.app) as client:
+        yield client
 
 
 def create_item(client: TestClient, name: str = "item", price: float = 10.0) -> int:
